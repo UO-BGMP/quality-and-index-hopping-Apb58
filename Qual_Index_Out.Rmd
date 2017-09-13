@@ -1,0 +1,102 @@
+---
+title: "Quality and Index Swapping Analysis"
+author: "Adrian Bubie"
+date: "9/11/17"
+output: html_document
+---
+
+### Goals: Determine if index swapping occurred in our Hiseq4000 class sequencing samples.
+De-multiplex samples to create 48 FASTQ files that contain acceptable index pairs (read1 and
+read2) and two files of undetermined files that contain unacceptable index pairs, low quality, or
+undetermined (read1 and read2).
+
+1. (Please see the associated python script, "Qual_Mean_Calc.py" for reference on how the files used to plot here were created).
+
+Quality plots per basepair position and distribution of average quality score per read, for each of our 4 input files (read1, read2, index1, index2):
+
+```{r, echo=FALSE}
+# setwd('Users/Adrian/Desktop/Python_Programs/Qual_Ind_Swap/output')
+# Ave Qual by BP Pos:
+r1_bp <- read.table('r1_bp_out.csv', header = F, sep=',', col.names = c('bp','qual'))
+r2_bp <- read.table('r2_bp_out.csv', header = F, sep=',', col.names = c('bp','qual'))
+i1_bp <- read.table('i1_bp_out.csv', header = F, sep=',', col.names = c('bp','qual'))
+i2_bp <- read.table('i2_bp_out.csv', header = F, sep=',', col.names = c('bp','qual'))
+
+par(cex=1.2)
+plot(r1_bp$bp, r1_bp$qual, type = "o", xlim = c(0,40), ylim = c(28,40), main = 'Mean Quality Score by Base Pair Pos. (Read 1)', xlab = 'Base Pair Pos', ylab = 'Mean Qual Score (Phred)', col = 'Darkorange', cex = 0.8)
+plot(r2_bp$bp, r2_bp$qual, type = "o", xlim = c(0,40), ylim = c(28,40), main = 'Mean Quality Score by Base Pair Pos. (Read 2)', xlab = 'Base Pair Pos', ylab = 'Mean Qual Score (Phred)', col = 'Darkgreen', cex = 0.8)
+plot(i1_bp$bp, i1_bp$qual, type = "o", xlim = c(0,9), ylim = c(28,40), main = 'Mean Quality Score by Base Pair Pos. (Index 1)', xlab = 'Base Pair Pos', ylab = 'Mean Qual Score (Phred)', col = 'Steel Blue', cex = 0.8)
+plot(i2_bp$bp, i2_bp$qual, type = "o", xlim = c(0,9), ylim = c(28,40), main = 'Mean Quality Score by Base Pair Pos. (Index 2)', xlab = 'Base Pair Pos', ylab = 'Mean Qual Score (Phred)', col = 'Red', cex = 0.8)
+```
+
+```{r, echo=FALSE}
+# Quality Score Dist by Reads:
+r1_dist <- read.table('r1_dist_out.csv', header = F, sep=',', col.names = c('counts'))
+r2_dist <- read.table('r2_dist_out.csv', header = F, sep=',', col.names = c('counts'))
+i1_dist <- read.table('i1_dist_out.csv', header = F, sep=',', col.names = c('counts'))
+i2_dist <- read.table('i2_dist_out.csv', header = F, sep=',', col.names = c('counts'))
+
+hist(r1_dist$counts, main = 'Distribution of Reads by Average QS for R1', xlab = 'Average Quality Score (Phred)', ylab = 'Number of Reads', breaks = 25, col = 'Darkorange')
+hist(r2_dist$counts, main = 'Distribution of Reads by Average QS for R2', xlab = 'Average Quality Score (Phred)', ylab = 'Number of Reads', breaks = 25, col = 'Darkgreen')
+hist(i1_dist$counts, main = 'Distribution of Reads by Average QS for I1', xlab = 'Average Quality Score (Phred)', ylab = 'Number of Reads', breaks = 25, col = 'Steel Blue')
+hist(i2_dist$counts, main = 'Distribution of Reads by Average QS for I2', xlab = 'Average Quality Score (Phred)', ylab = 'Number of Reads', breaks = 25, col = 'Red')
+```
+
+
+From these distributions, we can most likely set a quality cutoff of 35 for the index pairs and quality cutoff of 37 for our paired reads, and retain about 3/4 (about 250 million) of our reads, while improving the quality of our reads overall.
+
+We also know that the illumina system will sometimes record bases as 'N' for 'any' when it is not certain what base to call for a particular read. We can count the number of indexes that contain an 'N' in the sequence using the following UNIX command:
+
+```
+>$ for FILE in /projects/bgmp/2017_sequencing/*.fastq; do counts=$(awk 'NR%4==2' $FILE | grep "N" | wc -l); echo $FILE $counts; done
+/projects/bgmp/2017_sequencing/1294_S1_L008_R1_001.fastq 2602560
+/projects/bgmp/2017_sequencing/1294_S1_L008_R2_001.fastq 3976613
+/projects/bgmp/2017_sequencing/1294_S1_L008_R3_001.fastq 3328051
+/projects/bgmp/2017_sequencing/1294_S1_L008_R4_001.fastq 3591851
+```
+
+Our Indexes are contained in the 'R2' and 'R3' files; so we have 3976613 and 3328051 reads with 'N's for our index 1 and index 2, respectively (a total of 7304664 reads across both indexes)
+
+Overall, the read distributions show that most of our data clustered pretty high on the quality scale. Illumina defines Phred 30 as 99.9% accuracy for the basecall, and <90% of our reads have an average score of 30 or above. However, there is significant disparity between our Index read scores and our insert read qualities. Index scores appear to be overall of lower quality on average than our insert reads' qscore; additionally, we see in the graph of quality by basepair that the bases at the beginning of each index/read almost always have a average quality score lower than those of the bases further into the read. This indicates that the bases read at the beginning of the sequence (near the oligo linkage on the flowcell) are more difficult for the sequencer to resolve properly. Notice also that vast majority of the Indexes that contain an 'N' base (for unresolved or 'any' base) have that 'N' at the starting position of the index. This provides further evidence that the sequencer's resolution for bases starts poor but gets much better as synthesis continues into the insert.
+
+2. (Please see the associated python script, "Qual_Index_Swp.py" for reference and indication of how reads were binned by index pairs). Based on analysis of the index reads above, the reads were filtered by an index average quality cut-off Phred score of 35. This means that reads that had an *both* indexes with an average quality score of 35 or above were retained and all other reads were removed.
+
+    a. There are a total of 363246735 reads in the original Sequencing output. After filtering by index quality, a total of 245598505 reads were retained, representing a retention rate of just over 67.6%. The read counts can be broken down by index pairs (libraries), as seen below:
+    
+    ```{r, echo = F}
+    Index_counts <- read.table('Formatted_sorted_indexes.txt', header = F, sep = ' ')
+    colnames(Index_counts) <- c('Index1','Index2','Read_Count')
+    print(Index_counts)
+    match_sum <- sum(Index_counts$Read_Count[1:24])
+    swap_sum <- sum(Index_counts$Read_Count[25:576])
+    ```
+    The first 24 lines give the number of retained reads for each of our expected (matching) index pairs. In total, these account for 239750646 of the total 245598505; 97.6% of the retained reads.
+    (Note: I've indcluded the Sorted_Index_counts.txt file with the breakdown of reads by index pair with this document, since the output is slightly unwieldy here.)
+    
+    b. There are a total of 352378 reads that have swapped indexes. Note that this does not include the counts of reads that contained indexes that did not match to any expected library (our "Unknown" counts)
+    c. We can visualize the read counts per swapped index-pairs by plotting the first index against the second index in a dotplot and a heat map (Note: to keep the heatmap from oversaturation for the outlier read counts, all read counts have been log corrected such that the heatmap represents the distribution of log(Read_Counts)):
+    
+    ```{r, echo=FALSE}
+    Swapped_Ind <- Index_counts[25:576,]
+    colnames(Swapped_Ind) <- c('Index1','Index2','Read_Count')
+    Swapped_Ind <- Swapped_Ind[order(Swapped_Ind$Index1),]
+    
+    # Create a matrix of Ind1 v. Ind2:
+    library(reshape2)
+    mat <- data.frame(x=Swapped_Ind$Index1, y=Swapped_Ind$Index2, z=Swapped_Ind$Read_Count)
+    Ind_mat <- acast(mat, x~y, value.var = "z")
+    
+    #Plot the Indexes against each other, with the size of the points indicating the number of reads that index pair included.
+    library(ggplot2)
+    ggplot(Swapped_Ind, aes(Index1, Index2, size=Read_Count)) +geom_point() + theme(axis.text.x = element_text(angle = 90))+ labs(title = "Read Counts for unmatched Index Pairs")
+    
+    #Heatmap of the Indexes against each other (log scaled):
+    library(gplots)
+    ind_pal <- colorRampPalette(c("blue","orange","Yellow"))(n = 25)
+    heatmap.2(log(Ind_mat), dendrogram = "none", Rowv = T, Colv = T, trace="none", cexRow = 0.8, cexCol = 0.8, na.color = 'Black', main = "Map of log-corrected Read Counts\n for Index Swapped pairs", cex.main = 0.5, col = ind_pal, margins = c(5,5))
+    #barplot(Ind_mat, names.arg = colnames(paste(Swapped_Ind$Index1,Swapped_Ind$Index2)), las=2, cex.names = 0.6)
+    ```
+    
+    These two visualizations illustrate that certain index swaps is much more likely to occur. The TATGGCAC (C4) index had the highest counts among the swapped index pairs, with TCTTCGAC (C10) and CTCTGGAT (B3) having very high representation as well. This makes sense, as these were also the libraries that had shared the largest proportion of the total read counts; however, the converse does not appear to be true, with the lowest represented libraries (CACTTCAC, TCGACAAG, and GATCTTGC) not appearing to be represented that much lower than some of the libraries with 2x or more reads. This could indicate a potential "read representation limit" below which index swapping does not become significantly more common. 
+    
+3. No data to report -- read files were not created due to file limit constraints.
